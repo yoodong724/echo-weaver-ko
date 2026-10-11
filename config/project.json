@@ -1,0 +1,12 @@
+{
+  "project": "echo-weaver-ko",
+  "game": {
+    "root": "/mnt/e/XboxGames/Echo Weaver/Content",
+    "data_bundle": "Echo Weaver_Data/data.unity3d",
+    "unity_version": "6000.0.66f2",
+    "packer": "lz4"
+  },
+  "source": {
+    "snapshot": "1.0.2.0"
+  }
+}

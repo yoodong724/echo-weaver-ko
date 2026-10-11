@@ -1,0 +1,22 @@
+# 게임 데이터·번역·폰트·작업 산출물은 공개 소스에 포함하지 않음
+assets/
+data/
+canonical/
+backups/
+runtime/
+dist/
+payload/
+*.ttf
+*.otf
+*.woff
+*.woff2
+*.unity3d
+*.original
+*.zip
+*.exe
+*.dll
+.venv/
+__pycache__/
+*.py[cod]
+*.spec
+*:Zone.Identifier

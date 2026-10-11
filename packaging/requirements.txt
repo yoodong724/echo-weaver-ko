@@ -1,0 +1,21 @@
+# 배포 EXE 빌드용(Windows, Python 3.11). LZ4 결과가 검증 해시와 같도록 버전을 고정한다.
+UnityPy==1.25.4
+TypeTreeGeneratorAPI==0.0.10
+lz4==4.4.5
+brotli==1.2.0
+pillow==12.3.0
+texture2ddecoder==1.0.6
+etcpak==0.9.15
+astc_encoder_py==0.1.12
+archspec==0.2.6
+fmod_toolkit==0.1.3
+pyfmodex==0.7.2
+fsspec==2026.9.0
+attrs==26.1.0
+tpk_ar==0.2.4
+freetype-py==2.5.1
+fonttools==4.66.1
+numpy==2.4.6
+scipy==1.17.1
+PyInstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

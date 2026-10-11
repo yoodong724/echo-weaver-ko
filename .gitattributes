@@ -1,0 +1,6 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+packaging/*.cmd text eol=crlf
+packaging/*.ps1 text eol=crlf

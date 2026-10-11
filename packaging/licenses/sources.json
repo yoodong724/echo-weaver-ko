@@ -1,0 +1,22 @@
+[
+  {
+    "file": "FreeType-FTL.txt",
+    "source": "https://raw.githubusercontent.com/freetype/freetype/master/docs/FTL.TXT",
+    "sha256": "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f"
+  },
+  {
+    "file": "Capstone-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/capstone-engine/capstone/5.0.6/LICENSE.TXT",
+    "sha256": "65e9ed46a59976eda8f5bd1ea79a680dea38dd299c760bc9a8d87a764ef5029b"
+  },
+  {
+    "file": "FreeType-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/freetype/freetype/master/LICENSE.TXT",
+    "sha256": "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b"
+  },
+  {
+    "file": "Capstone-LLVM-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/capstone-engine/capstone/5.0.6/LICENSE_LLVM.TXT",
+    "sha256": "dfdca2d7fdbabfd937f9dc41b7f61647b0e6cb1f9ee767ecb4520f979ebe91da"
+  }
+]

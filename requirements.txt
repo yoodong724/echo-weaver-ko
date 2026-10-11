@@ -1,0 +1,8 @@
+# 작업용(추출·검사·빌드). Python 3.11+
+UnityPy==1.25.4
+TypeTreeGeneratorAPI==0.0.10
+fonttools==4.66.1
+freetype-py==2.5.1
+numpy>=2.0
+scipy>=1.13
+pillow>=10
