@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Version, [string]$PreviousVersion)
+﻿param([Parameter(Mandatory = $true)][string]$Version, [string]$PreviousVersion)
 $ErrorActionPreference = 'Stop'
 $Project = [IO.Path]::GetFullPath((Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath)
 $Config = Get-Content (Join-Path $Project 'config\project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -12,7 +12,6 @@ $Misplaced = Join-Path $Base 'misplaced'
 $Package = Join-Path $GameCopy 'KoreanPatch'
 $Data = Join-Path $GameCopy 'Echo Weaver_Data'
 $Bundle = Join-Path $Data 'data.unity3d'
-$Dll = Join-Path $Data 'Managed\Unity.TextMeshPro.dll'
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force $Stage | Out-Null
 
@@ -22,14 +21,14 @@ New-Item -ItemType Directory -Force (Join-Path $Data 'Managed'), $Misplaced | Ou
 $Backup = Join-Path $Project "backups\$Snapshot"
 $InstalledManaged = Join-Path ($Config.game.root -replace '^/mnt/([a-z])/', '$1:/') 'Echo Weaver_Data\Managed'
 Get-ChildItem -LiteralPath $InstalledManaged -Filter '*.dll' | Copy-Item -Destination (Join-Path $Data 'Managed')
-Copy-Item -LiteralPath (Join-Path $Backup 'Echo Weaver_Data\Managed\Unity.TextMeshPro.dll') -Destination $Dll -Force
+Get-ChildItem -LiteralPath (Join-Path $Backup 'Echo Weaver_Data\Managed') -Filter '*.dll' | Copy-Item -Destination (Join-Path $Data 'Managed') -Force
 Copy-Item -LiteralPath (Join-Path $Backup 'data.unity3d') -Destination $Bundle
 Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
 Expand-Archive -LiteralPath $Zip -DestinationPath $Misplaced
 $Patch = Get-Content (Join-Path $Package 'patch.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $Original = $Patch.game.original_sha256
 $Patched = $Patch.game.patched_sha256
-$DllSpec = $Patch.managed_files[0]
+$Specs = @($Patch.managed_files)
 $PackageFiles = (Get-ChildItem -LiteralPath $Package -Recurse -File).Count
 
 $env:PATH = Join-Path $env:SystemRoot 'System32'
@@ -39,6 +38,20 @@ $env:EW_NO_PAUSE = '1'
 $Results = [ordered]@{started_at=(Get-Date).ToString('o'); zip=$Zip; zip_sha256=$null; path=$env:PATH;
     game_copy=$GameCopy; runs=@()}
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function ManagedHashesMatch($FileSpecs, $Field) {
+    foreach ($Spec in $FileSpecs) {
+        $Target = Join-Path $GameCopy ($Spec.path -replace '/', '\')
+        if ((Hash $Target) -ne $Spec.$Field) { return $false }
+    }
+    return $true
+}
+function ManagedBackupsMatch($FileSpecs) {
+    foreach ($Spec in $FileSpecs) {
+        $Target = Join-Path $GameCopy ($Spec.path -replace '/', '\')
+        if ((Hash "$Target.original") -ne $Spec.original_sha256) { return $false }
+    }
+    return $true
+}
 function Save { $Results | ConvertTo-Json -Depth 15 | Set-Content (Join-Path $Stage 'windows-test.json') -Encoding UTF8 }
 function Run($Name, $Command, $Arguments) {
     Write-Output "Test: $Name"
@@ -72,7 +85,7 @@ function Expect($Condition, $Message) { if (-not $Condition) { throw $Message } 
 
 $Results.zip_sha256 = Hash $Zip
 Expect (-not (Get-Command python,python3,py -ErrorAction SilentlyContinue)) 'Python available on isolated PATH'
-Expect ((Hash $Bundle) -eq $Original -and (Hash $Dll) -eq $DllSpec.original_sha256) 'Game copy is not original'
+Expect ((Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Game copy is not original'
 $Install = Join-Path $Package 'install.cmd'
 $Restore = Join-Path $Package 'restore.cmd'
 
@@ -87,12 +100,12 @@ foreach ($Module in $Info.modules.PSObject.Properties) {
 $Results.runtime = $Info
 # 2-5. Install, repeat, restore, repeat.
 Run 'install' $Install
-Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (Hash $Dll) -eq $DllSpec.patched_sha256) 'Install failed'
-Expect ((Hash "$Bundle.original") -eq $Original -and (Hash "$Dll.original") -eq $DllSpec.original_sha256) 'Backups not verified'
+Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'Install failed'
+Expect ((Hash "$Bundle.original") -eq $Original -and (ManagedBackupsMatch $Specs)) 'Backups not verified'
 Run 'install-repeat' $Install
 Expect ($LastCode -eq 0 -and $LastOut -match 'already_installed') 'Repeated install failed'
 Run 'restore' $Restore
-Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (Hash $Dll) -eq $DllSpec.original_sha256) 'Restore failed'
+Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Restore failed'
 Run 'restore-repeat' $Restore
 Expect ($LastCode -eq 0 -and $LastOut -match 'already_original') 'Repeated restore failed'
 # 6. Package folder is left as extracted.
@@ -125,13 +138,13 @@ if ($PreviousVersion) {
     Run 'upgrade-old-install' (Join-Path $Package 'install.cmd')
     Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $PreviousPatch.game.patched_sha256) 'Previous release install failed'
     Run 'upgrade-old-restore' (Join-Path $Package 'restore.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (Hash $Dll) -eq $DllSpec.original_sha256) 'Previous release restore failed'
+    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Previous release restore failed'
     Remove-Item -LiteralPath $Package -Recurse -Force
     Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
     Run 'upgrade-new-install' (Join-Path $Package 'install.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (Hash $Dll) -eq $DllSpec.patched_sha256) 'New release install after restore failed'
+    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'New release install after restore failed'
     Run 'upgrade-new-restore' (Join-Path $Package 'restore.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (Hash $Dll) -eq $DllSpec.original_sha256) 'New release restore after upgrade failed'
+    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'New release restore after upgrade failed'
     Expect ((Get-ChildItem -LiteralPath $Package -Recurse -File).Count -eq $PackageFiles) 'Upgrade left files in KoreanPatch'
     $Results.previous_version = $PreviousVersion
     $Results.previous_zip_sha256 = Hash $PreviousZip

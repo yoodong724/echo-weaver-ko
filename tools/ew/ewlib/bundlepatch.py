@@ -33,6 +33,12 @@ def _slot_font(gb: GameBundle, cfg):
     return fonts[name]
 
 
+def _font_reference(settings_obj, font_obj) -> dict:
+    if settings_obj.assets_file is not font_obj.assets_file:
+        raise EWError("FONT_REFERENCE", "전역 폴백 폰트와 TMP Settings가 같은 에셋 파일에 있어야 합니다.")
+    return {"m_FileID": 0, "m_PathID": font_obj.path_id}
+
+
 def compose_copy(gb: GameBundle, cfg, translations: dict[str, str]) -> bytes:
     """사용자 원본 번들의 원문 언어 파일 + 한국어 번역 → 슬롯 언어 파일(배포본 적용용)."""
     pattern = cfg["source"]["copy_asset_pattern"]
@@ -101,11 +107,18 @@ def patch_bundle(cfg, original: Path, ko_copy: bytes, font: FontData, game_root:
             if k == "_GradientScale" and abs(v - (font.padding + 1)) > 1e-3:
                 raise EWError("GRADIENT_SCALE", f"_GradientScale={v}, 예상 {font.padding + 1}")
         mat.save()
-    # 3) TMP Settings: 한글 어절 단위 줄바꿈
-    if cfg["target"].get("tmp_modern_hangul_line_breaking", True):
+    # 3) TMP Settings: 한글 줄바꿈·다른 언어에서도 언어 메뉴의 한국어 이름 표시
+    modern = cfg["target"].get("tmp_modern_hangul_line_breaking", True)
+    global_fallback = cfg["target"].get("tmp_global_slot_fallback", False)
+    if modern or global_fallback:
         for o in gb.monobehaviours(TMP_SETTINGS):
             t = gb.read_mb(o, TMP_SETTINGS)
-            t["m_UseModernHangulLineBreakingRules"] = 1
+            if modern:
+                t["m_UseModernHangulLineBreakingRules"] = 1
+            if global_fallback:
+                ref = _font_reference(o, obj)
+                if ref not in t["m_fallbackFontAssets"]:
+                    t["m_fallbackFontAssets"].append(ref)
             gb.write_mb(o, TMP_SETTINGS, t)
     return gb
 
@@ -127,13 +140,17 @@ def verify_bundle(cfg, path: Path, ko_copy: bytes, font: FontData, game_root: Pa
     got = gb.text_asset(cfg["source"]["copy_asset_pattern"].format(lang=slot)).read().m_Script.encode("utf-8", "surrogateescape")
     obj, tree = _slot_font(gb, cfg)
     tex = obj.assets_file.objects[tree["m_AtlasTextures"][0]["m_PathID"]].read()
-    settings = [gb.read_mb(o, TMP_SETTINGS)["m_UseModernHangulLineBreakingRules"] for o in gb.monobehaviours(TMP_SETTINGS)]
+    settings_objects = gb.monobehaviours(TMP_SETTINGS)
+    settings = [gb.read_mb(o, TMP_SETTINGS) for o in settings_objects]
+    if cfg["target"].get("tmp_global_slot_fallback", False):
+        extra["global_slot_font_fallback"] = bool(settings) and all(
+            _font_reference(o, obj) in t["m_fallbackFontAssets"] for o, t in zip(settings_objects, settings))
     checks = {
         "copy_identical": got == ko_copy,
         "copy_parses": len(copydata.parse(got)) > 0,
         "font_characters": len(tree["m_CharacterTable"]) == len(font.character_table),
         "atlas_identical": bytes(tex.get_image_data()) == font.atlas,
-        "modern_hangul_line_breaking": settings == [1] * len(settings),
+        "modern_hangul_line_breaking": all(t["m_UseModernHangulLineBreakingRules"] == 1 for t in settings),
         **extra,
     }
     return {"passed": all(checks.values()), **checks}
