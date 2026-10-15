@@ -18,3 +18,6 @@ python3 -m unittest discover -s tools/ew/tests -v
 ```
 
 패치 사용자는 [Releases](https://github.com/yoodong724/echo-weaver-ko/releases)의 설치 ZIP을 받으세요.
+
+배포 ZIP은 게임 버전을 기준으로 `EchoWeaver-KO-1.0.4.0.zip`처럼 이름을 붙입니다.
+같은 게임 버전의 추가 업데이트는 `-rc1.zip`, `-rc2.zip`, `-rc3.zip` 순입니다.

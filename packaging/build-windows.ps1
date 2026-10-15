@@ -3,7 +3,9 @@ $ErrorActionPreference = 'Stop'
 $Project = [IO.Path]::GetFullPath((Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath)
 $Venv = Join-Path $Project 'runtime\build-venv'
 $Python = Join-Path $Venv 'Scripts\python.exe'
-$Snapshot = (Get-Content (Join-Path $Project 'config\project.json') -Raw -Encoding UTF8 | ConvertFrom-Json).source.snapshot
+$Patch = Get-Content (Join-Path $Project "runtime\package\$Version\KoreanPatch\patch.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$Snapshot = $Patch.snapshot
+if (-not $Snapshot) { $Snapshot = (Get-Content (Join-Path $Project 'config\project.json') -Raw -Encoding UTF8 | ConvertFrom-Json).source.snapshot }
 $Record = Join-Path $Project "data\review\$Snapshot\release-$Version"
 New-Item -ItemType Directory -Force $Record | Out-Null
 $env:PYTHONUTF8 = '1'

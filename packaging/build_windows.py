@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata as metadata
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,14 @@ PACKAGING = ROOT / "packaging"
 
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def archive_name(snapshot: str, version: str) -> str:
+    revision = re.search(r"-rc([1-9][0-9]*)$", version)
+    if "-rc" in version and revision is None:
+        raise ValueError("추가 업데이트는 -rc1, -rc2, ... 형식이어야 합니다.")
+    suffix = f"-rc{revision.group(1)}" if revision else ""
+    return f"EchoWeaver-KO-{snapshot}{suffix}.zip"
 
 
 def freeze(base: Path) -> Path:
@@ -75,12 +84,15 @@ def main() -> None:
     patch = json.loads((stage / "patch.json").read_text(encoding="utf-8"))
     if patch["version"] != version:
         raise SystemExit(f"Run `ew package --version {version}` first.")
+    snapshot = patch.get("snapshot") or json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))["source"]["snapshot"]
+    archive = ROOT / "dist" / archive_name(snapshot, version)
+    if archive.exists():
+        raise SystemExit(f"Archive already exists: {archive.name}; use the next -rcN version.")
     for generated in (stage / "bin", stage / "licenses"):
         if generated.exists():
             shutil.rmtree(generated)
     shutil.copytree(freeze(base), stage / "bin")
     inventory = collect_licenses(stage / "licenses")
-    archive = ROOT / "dist" / f"EchoWeaver-KO-{version}.zip"
     archive.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for file in sorted(stage.rglob("*")):
@@ -88,7 +100,6 @@ def main() -> None:
                 z.write(file, (Path("KoreanPatch") / file.relative_to(stage)).as_posix())
     digest = sha(archive)
     archive.with_suffix(".sha256").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
-    snapshot = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))["source"]["snapshot"]
     record = ROOT / "data/review" / snapshot / f"release-{version}"
     record.mkdir(parents=True, exist_ok=True)
     result = {"archive": archive.relative_to(ROOT).as_posix(), "sha256": digest, "size": archive.stat().st_size,

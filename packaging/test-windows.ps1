@@ -1,10 +1,14 @@
-﻿param([Parameter(Mandatory = $true)][string]$Version, [string]$PreviousVersion)
+﻿param([Parameter(Mandatory = $true)][string]$Version, [string]$PreviousVersion, [string]$Snapshot)
 $ErrorActionPreference = 'Stop'
 $Project = [IO.Path]::GetFullPath((Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath)
 $Config = Get-Content (Join-Path $Project 'config\project.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-$Snapshot = $Config.source.snapshot
+if (-not $Snapshot) { $Snapshot = $Config.source.snapshot }
 $Stage = Join-Path $Project "data\review\$Snapshot\release-$Version"
 $Zip = Join-Path $Project "dist\EchoWeaver-KO-$Version.zip"
+$Suffix = ''
+if ($Version -match '-rc([1-9][0-9]*)$') { $Suffix = "-rc$($Matches[1])" }
+$NamedZip = Join-Path $Project "dist\EchoWeaver-KO-$Snapshot$Suffix.zip"
+if (Test-Path -LiteralPath $NamedZip) { $Zip = $NamedZip }
 # Local NTFS like a real install; Korean, spaces and parentheses in the game path; a second copy without a game.
 $Base = Join-Path ([IO.Path]::GetTempPath()) "ew-package-test\$Version"
 $GameCopy = Join-Path $Base ([string]::Concat([char]0xAC8C, [char]0xC784, ' (test)'))
@@ -134,21 +138,45 @@ if ($PreviousVersion) {
     Remove-Item -LiteralPath $Package -Recurse -Force
     Expand-Archive -LiteralPath $PreviousZip -DestinationPath $GameCopy
     $PreviousPatch = Get-Content (Join-Path $Package 'patch.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    Expect ($PreviousPatch.game.original_sha256 -eq $Original) 'Previous release has a different game source'
-    Run 'upgrade-old-install' (Join-Path $Package 'install.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $PreviousPatch.game.patched_sha256) 'Previous release install failed'
-    Run 'upgrade-old-restore' (Join-Path $Package 'restore.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Previous release restore failed'
-    Remove-Item -LiteralPath $Package -Recurse -Force
-    Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
-    Run 'upgrade-new-install' (Join-Path $Package 'install.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'New release install after restore failed'
-    Run 'upgrade-new-restore' (Join-Path $Package 'restore.cmd')
-    Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'New release restore after upgrade failed'
-    Expect ((Get-ChildItem -LiteralPath $Package -Recurse -File).Count -eq $PackageFiles) 'Upgrade left files in KoreanPatch'
+    if ($PreviousPatch.game.original_sha256 -ne $Original) {
+        # A game update must reject the old patch without touching the new game or its backups.
+        Run 'old-version-install-rejected' (Join-Path $Package 'install.cmd')
+        Expect ($LastCode -eq 1 -and $LastErr -match 'VERSION_MISMATCH') 'Old game version install was not rejected'
+        Expect ((Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Old patch changed new game files'
+        Run 'old-version-restore-rejected' (Join-Path $Package 'restore.cmd')
+        Expect ($LastCode -eq 1 -and $LastErr -match 'NO_BACKUP') 'Old game version restore was not rejected'
+        Expect ((Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Old restore changed new game files'
+        Expect ((Hash "$Bundle.original") -eq $Original -and (ManagedBackupsMatch $Specs)) 'Old patch changed new game backups'
+        Remove-Item -LiteralPath $Package -Recurse -Force
+        Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
+        $OldSnapshot = $PreviousPatch.snapshot
+        if (-not $OldSnapshot) { $OldSnapshot = '1.0.2.0' }
+        $OldBundle = Join-Path $Project "backups\$OldSnapshot\data.unity3d"
+        Expect ((Hash $OldBundle) -eq $PreviousPatch.game.original_sha256) 'Previous game fixture hash mismatch'
+        Copy-Item -LiteralPath $OldBundle -Destination $Bundle -Force
+        Run 'new-version-on-old-game-rejected' (Join-Path $Package 'install.cmd')
+        Expect ($LastCode -eq 1 -and $LastErr -match 'VERSION_MISMATCH') 'New patch accepted old game version'
+        Expect ((Hash $Bundle) -eq $PreviousPatch.game.original_sha256 -and (ManagedHashesMatch $Specs 'original_sha256')) 'New patch changed unsupported game files'
+        Copy-Item -LiteralPath "$Bundle.original" -Destination $Bundle -Force
+        Expect ((Hash $Bundle) -eq $Original -and (ManagedBackupsMatch $Specs)) 'New game fixture was not restored'
+        $Results.previous_version_rejected = $true
+        $Results.new_patch_rejected_previous_game = $true
+    } else {
+        Run 'upgrade-old-install' (Join-Path $Package 'install.cmd')
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $PreviousPatch.game.patched_sha256) 'Previous release install failed'
+        Run 'upgrade-old-restore' (Join-Path $Package 'restore.cmd')
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Previous release restore failed'
+        Remove-Item -LiteralPath $Package -Recurse -Force
+        Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
+        Run 'upgrade-new-install' (Join-Path $Package 'install.cmd')
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'New release install after restore failed'
+        Run 'upgrade-new-restore' (Join-Path $Package 'restore.cmd')
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'New release restore after upgrade failed'
+        Expect ((Get-ChildItem -LiteralPath $Package -Recurse -File).Count -eq $PackageFiles) 'Upgrade left files in KoreanPatch'
+        $Results.upgrade_passed = $true
+    }
     $Results.previous_version = $PreviousVersion
     $Results.previous_zip_sha256 = Hash $PreviousZip
-    $Results.upgrade_passed = $true
 }
 $Results.checks_passed = if ($PreviousVersion) { 10 } else { 9 }
 $Results.passed = $true
