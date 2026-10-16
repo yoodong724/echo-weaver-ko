@@ -1,0 +1,25 @@
+{
+  "edits": [
+    {
+      "offset": 59240,
+      "before": "74",
+      "after": "11"
+    }
+  ],
+  "method": "System.Void TMPro.TextMeshProUGUI::GenerateTextMesh()",
+  "method_rva": 65240,
+  "method_body_file_offset": 57560,
+  "method_header_size": 12,
+  "il_offset": "0x0683",
+  "original_branch_target": "0x06f9",
+  "patched_branch_target": "0x0696",
+  "purpose": "미인식 태그의 문자별 글꼴을 FaceInfo 배율 계산 전에 갱신",
+  "format": "echo-weaver-ko/byte-patch-v1",
+  "id": "tmp-ui-literal-fallback-1.0.5.0-v1",
+  "path": "Echo Weaver_Data/Managed/Unity.TextMeshPro.dll",
+  "original_sha256": "bf13f84248726682e5b5717c0c74d3a8b91a2416bf40e78a9e2566f13e8b66f7",
+  "patched_sha256": "1a399f598dfe540f16ab099661df1067ed9c5d729fcfa4a616c82ef5c631d205",
+  "assembly_mvid": "c3607d12-5437-4452-8f17-3397f5aecbe3",
+  "strong_name_signed": false,
+  "game_version": "1.0.5.0"
+}

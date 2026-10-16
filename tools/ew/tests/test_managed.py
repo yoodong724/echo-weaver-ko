@@ -50,17 +50,86 @@ class ManagedPatchTests(unittest.TestCase):
         with self.assertRaises(EWError):
             managed.patch_bytes(bytes(damaged), spec)
 
+    def restores(self, changes):
+        # 배포본 restore와 같이 원본 출처를 매번 다시 고른다(복구 후에는 백업이 없다).
+        return [managed.FileChange(c.target, managed.original_source(c.target, c.backup, c.original_sha256),
+                                   c.backup, c.original_sha256, c.patched_sha256) for c in changes]
+
     def test_install_repeat_restore_repeat(self):
         changes = self.fixture()
         self.assertEqual(managed.deploy(changes)["status"], "installed")
         self.assertEqual(managed.deploy(changes)["status"], "already_installed")
-        restores = [managed.FileChange(c.target, c.backup, c.backup, c.original_sha256, c.patched_sha256)
-                    for c in changes]
-        self.assertEqual(managed.deploy(restores, restoring=True)["status"], "restored")
-        self.assertEqual(managed.deploy(restores, restoring=True)["status"], "already_original")
+        result = managed.deploy(self.restores(changes), restoring=True)
+        self.assertEqual(result["status"], "restored")
+        self.assertEqual(len(result["backups_removed"]), 2)
+        self.assertEqual(managed.deploy(self.restores(changes), restoring=True)["status"], "already_original")
         self.assertEqual(changes[0].target.read_bytes(), b"original language bundle")
         self.assertEqual(changes[1].target.read_bytes(), b"original renderer")
+        self.assertFalse(list(self.root.glob("*.original")))
         self.assertFalse(list(self.root.glob(".ew-*.tmp")))
+        self.assertEqual(managed.deploy(changes)["status"], "installed")
+
+    def test_stale_backup_from_previous_game_version_is_replaced_on_install(self):
+        changes = self.fixture()
+        for c in changes:
+            c.backup.write_bytes(b"previous game version")
+        self.assertEqual(managed.deploy(changes)["status"], "installed")
+        self.assertEqual(changes[0].backup.read_bytes(), b"original language bundle")
+        self.assertEqual(changes[1].backup.read_bytes(), b"original renderer")
+        self.assertEqual(managed.deploy(self.restores(changes), restoring=True)["status"], "restored")
+        self.assertEqual(changes[1].target.read_bytes(), b"original renderer")
+        self.assertFalse(list(self.root.glob("*.original")))
+
+    def test_stale_backup_is_removed_by_restore_without_install(self):
+        changes = self.fixture()
+        for c in changes:
+            c.backup.write_bytes(b"previous game version")
+        result = managed.deploy(self.restores(changes), restoring=True)
+        self.assertEqual(result["status"], "already_original")
+        self.assertEqual(len(result["backups_removed"]), 2)
+        self.assertEqual(changes[0].target.read_bytes(), b"original language bundle")
+
+    def test_stale_backup_with_unknown_game_file_is_rejected(self):
+        changes = self.fixture()
+        changes[0].backup.write_bytes(b"previous game version")
+        changes[0].target.write_bytes(b"newer game version")
+        with self.assertRaises(EWError) as error:
+            managed.deploy(changes)
+        self.assertEqual(error.exception.code, "VERSION_MISMATCH")
+        with self.assertRaises(EWError) as error:
+            managed.original_source(changes[0].target, changes[0].backup, changes[0].original_sha256)
+        self.assertEqual(error.exception.code, "BACKUP_VERIFY")
+        self.assertEqual(changes[0].backup.read_bytes(), b"previous game version")
+        self.assertEqual(changes[1].target.read_bytes(), b"original renderer")
+
+    def test_backup_outside_game_folder_is_kept_after_restore(self):
+        changes = self.fixture()
+        outside = self.root / "backups" / "bundle"
+        outside.parent.mkdir()
+        outside.write_bytes(b"original language bundle")
+        changes[0] = managed.FileChange(changes[0].target, changes[0].source, outside,
+                                        changes[0].original_sha256, changes[0].patched_sha256)
+        managed.deploy(changes)
+        result = managed.deploy(self.restores(changes), restoring=True)
+        self.assertEqual(result["backups_removed"], [str(changes[1].backup)])
+        self.assertEqual(outside.read_bytes(), b"original language bundle")
+
+    def test_failed_restore_keeps_backups(self):
+        changes = self.fixture()
+        managed.deploy(changes)
+        replace = os.replace
+
+        def fail_second(src, dst):
+            if Path(dst) == changes[1].target:
+                raise OSError("simulated locked DLL")
+            return replace(src, dst)
+
+        with patch.object(managed.os, "replace", side_effect=fail_second):
+            with self.assertRaises(OSError):
+                managed.deploy(self.restores(changes), restoring=True)
+        self.assertEqual(changes[0].target.read_bytes(), b"Korean language bundle")
+        self.assertEqual(changes[0].backup.read_bytes(), b"original language bundle")
+        self.assertEqual(changes[1].backup.read_bytes(), b"original renderer")
 
     def test_unknown_second_file_blocks_first_and_backups(self):
         changes = self.fixture()
@@ -73,6 +142,8 @@ class ManagedPatchTests(unittest.TestCase):
 
     def test_bad_second_backup_blocks_first(self):
         changes = self.fixture()
+        # 현재 파일이 원본이 아니면(수정본) 백업이 유일한 원본이므로 잔여 백업으로 대체하지 않는다.
+        changes[1].target.write_bytes(b"fixed renderer")
         changes[1].backup.write_bytes(b"bad backup")
         with self.assertRaises(EWError):
             managed.deploy(changes)
@@ -102,10 +173,8 @@ class ManagedPatchTests(unittest.TestCase):
         changes = self.fixture()
         managed.deploy(changes)
         changes[0].target.write_bytes(b"game update")
-        restores = [managed.FileChange(c.target, c.backup, c.backup, c.original_sha256, c.patched_sha256)
-                    for c in changes]
         with self.assertRaises(EWError):
-            managed.deploy(restores, restoring=True)
+            managed.deploy(self.restores(changes), restoring=True)
         self.assertEqual(changes[0].target.read_bytes(), b"game update")
         self.assertEqual(changes[1].target.read_bytes(), b"fixed renderer")
 

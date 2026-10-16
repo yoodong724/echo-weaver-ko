@@ -49,6 +49,13 @@ function ManagedHashesMatch($FileSpecs, $Field) {
     }
     return $true
 }
+function NoBackupsLeft($FileSpecs) {
+    if (Test-Path -LiteralPath "$Bundle.original") { return $false }
+    foreach ($Spec in $FileSpecs) {
+        if (Test-Path -LiteralPath ((Join-Path $GameCopy ($Spec.path -replace '/', '\')) + '.original')) { return $false }
+    }
+    return $true
+}
 function ManagedBackupsMatch($FileSpecs) {
     foreach ($Spec in $FileSpecs) {
         $Target = Join-Path $GameCopy ($Spec.path -replace '/', '\')
@@ -110,6 +117,7 @@ Run 'install-repeat' $Install
 Expect ($LastCode -eq 0 -and $LastOut -match 'already_installed') 'Repeated install failed'
 Run 'restore' $Restore
 Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Restore failed'
+Expect (NoBackupsLeft $Specs) 'Restore left .original backups in the game folder'
 Run 'restore-repeat' $Restore
 Expect ($LastCode -eq 0 -and $LastOut -match 'already_original') 'Repeated restore failed'
 # 6. Package folder is left as extracted.
@@ -146,7 +154,7 @@ if ($PreviousVersion) {
         Run 'old-version-restore-rejected' (Join-Path $Package 'restore.cmd')
         Expect ($LastCode -eq 1 -and $LastErr -match 'NO_BACKUP') 'Old game version restore was not rejected'
         Expect ((Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256')) 'Old restore changed new game files'
-        Expect ((Hash "$Bundle.original") -eq $Original -and (ManagedBackupsMatch $Specs)) 'Old patch changed new game backups'
+        Expect (NoBackupsLeft $Specs) 'Old patch created backups in the new game'
         Remove-Item -LiteralPath $Package -Recurse -Force
         Expand-Archive -LiteralPath $Zip -DestinationPath $GameCopy
         $OldSnapshot = $PreviousPatch.snapshot
@@ -157,10 +165,20 @@ if ($PreviousVersion) {
         Run 'new-version-on-old-game-rejected' (Join-Path $Package 'install.cmd')
         Expect ($LastCode -eq 1 -and $LastErr -match 'VERSION_MISMATCH') 'New patch accepted old game version'
         Expect ((Hash $Bundle) -eq $PreviousPatch.game.original_sha256 -and (ManagedHashesMatch $Specs 'original_sha256')) 'New patch changed unsupported game files'
-        Copy-Item -LiteralPath "$Bundle.original" -Destination $Bundle -Force
-        Expect ((Hash $Bundle) -eq $Original -and (ManagedBackupsMatch $Specs)) 'New game fixture was not restored'
+        Copy-Item -LiteralPath (Join-Path $Backup 'data.unity3d') -Destination $Bundle -Force
+        Expect ((Hash $Bundle) -eq $Original -and (NoBackupsLeft $Specs)) 'New game fixture was not restored'
+        # 11. A game update leaves the previous version's .original backups: install replaces them, restore removes them.
+        Copy-Item -LiteralPath $OldBundle -Destination "$Bundle.original"
+        Get-ChildItem -LiteralPath (Join-Path $Project "backups\$OldSnapshot\Echo Weaver_Data\Managed") -Filter '*.dll' |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Data "Managed\$($_.Name).original") }
+        Run 'install-over-previous-backups' $Install
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'Install over previous backups failed'
+        Expect ((Hash "$Bundle.original") -eq $Original -and (ManagedBackupsMatch $Specs)) 'Previous backups were not replaced'
+        Run 'restore-after-previous-backups' $Restore
+        Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Original -and (ManagedHashesMatch $Specs 'original_sha256') -and (NoBackupsLeft $Specs)) 'Restore after previous backups failed'
         $Results.previous_version_rejected = $true
         $Results.new_patch_rejected_previous_game = $true
+        $Results.previous_backups_replaced = $true
     } else {
         Run 'upgrade-old-install' (Join-Path $Package 'install.cmd')
         Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $PreviousPatch.game.patched_sha256) 'Previous release install failed'
@@ -178,7 +196,7 @@ if ($PreviousVersion) {
     $Results.previous_version = $PreviousVersion
     $Results.previous_zip_sha256 = Hash $PreviousZip
 }
-$Results.checks_passed = if ($PreviousVersion) { 10 } else { 9 }
+$Results.checks_passed = if ($Results.previous_backups_replaced) { 11 } elseif ($PreviousVersion) { 10 } else { 9 }
 $Results.passed = $true
 $Results.completed_at = (Get-Date).ToString('o')
 Save

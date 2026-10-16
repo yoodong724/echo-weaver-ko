@@ -142,6 +142,29 @@ def _temporary(target: Path, data: bytes) -> Path:
     return path
 
 
+def backup_path(target: Path) -> Path:
+    return target.with_name(target.name + ".original")
+
+
+def _stale_backup(c: FileChange, current: str) -> bool:
+    """이전 게임 버전에서 남은 게임 폴더 옆 백업인지. 현재 파일이 이 패치의 원본일 때만 해당한다."""
+    return c.backup == backup_path(c.target) and current == c.original_sha256
+
+
+def original_source(target: Path, backup: Path, original_sha256: str, missing: str | None = None) -> Path:
+    """원본 내용을 읽을 파일: 검증된 백업, 또는 현재 파일이 원본이면 현재 파일."""
+    current = sha256_file(target) if target.is_file() else None
+    if backup.exists():
+        if sha256_file(backup) == original_sha256:
+            return backup
+        if backup == backup_path(target) and current == original_sha256:
+            return target  # 이전 게임 버전의 잔여 백업: deploy가 설치 시 대체, 복구 시 정리한다.
+        raise EWError("BACKUP_VERIFY", f"{backup}의 해시가 원본과 다릅니다.")
+    if current != original_sha256:
+        raise EWError("NO_BACKUP", missing or f"검증된 원본 백업이 없습니다: {backup}")
+    return target
+
+
 def deploy(changes: list[FileChange], *, restoring: bool = False) -> dict:
     ensure_game_stopped()
     if len({c.target.resolve() for c in changes}) != len(changes):
@@ -160,18 +183,26 @@ def deploy(changes: list[FileChange], *, restoring: bool = False) -> dict:
             raise EWError("VERSION_MISMATCH", f"알 수 없는 게임 파일을 덮어쓰지 않습니다: {c.target}")
         if sha256_bytes(incoming) != desired:
             raise EWError("COPY_VERIFY", f"준비한 파일의 해시가 다릅니다: {c.source}")
+        stale = False
         if c.backup.exists():
             if sha256_file(c.backup) != c.original_sha256:
-                raise EWError("BACKUP_VERIFY", f"원본 백업 해시가 다릅니다: {c.backup}")
+                if not _stale_backup(c, current):
+                    raise EWError("BACKUP_VERIFY", f"원본 백업 해시가 다릅니다: {c.backup}")
+                stale = True
         elif current != c.original_sha256:
             raise EWError("NO_BACKUP", f"검증된 원본 백업이 없습니다: {c.backup}")
-        prepared.append((c, previous, incoming, current, desired))
+        prepared.append((c, previous, incoming, current, desired, stale))
     staged, replaced = [], []
     try:
-        for c, previous, incoming, current, desired in prepared:
-            if not c.backup.exists() and not restoring:
+        for c, previous, incoming, current, desired, stale in prepared:
+            if (stale or not c.backup.exists()) and not restoring:
+                # 잔여 백업은 검증된 현재 원본으로 대체한다.
                 c.backup.parent.mkdir(parents=True, exist_ok=True)
-                c.backup.write_bytes(previous)
+                temp = _temporary(c.backup, previous)
+                try:
+                    os.replace(temp, c.backup)
+                finally:
+                    temp.unlink(missing_ok=True)
                 if sha256_file(c.backup) != c.original_sha256:
                     raise EWError("BACKUP_VERIFY", str(c.backup))
             if current != desired:
@@ -205,7 +236,16 @@ def deploy(changes: list[FileChange], *, restoring: bool = False) -> dict:
     finally:
         for _, temp, _, _ in staged:
             temp.unlink(missing_ok=True)
+    removed = []
+    if restoring:
+        # 모든 파일이 원본으로 확인된 뒤에만 게임 폴더 옆 백업을 지운다. 프로젝트 backups/는 건드리지 않는다.
+        for c, *_ in prepared:
+            if (c.backup == backup_path(c.target) and c.backup.exists()
+                    and sha256_file(c.target) == c.original_sha256):
+                c.backup.unlink()
+                removed.append(str(c.backup))
     return {"status": ("restored" if restoring else "installed") if staged else
                       ("already_original" if restoring else "already_installed"),
             "files": [{"path": str(c.target), "sha256": desired, "changed": current != desired}
-                      for c, _, _, current, desired in prepared]}
+                      for c, _, _, current, desired, _ in prepared],
+            **({"backups_removed": removed} if restoring else {})}
