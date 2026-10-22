@@ -1,0 +1,21 @@
+{
+  "edits": [
+    {
+      "offset": 1587610,
+      "before": "e5652c679e8a",
+      "after": "5cd56dadb4c5"
+    }
+  ],
+  "method": "System.Void LanguageUISelect::.cctor()",
+  "il_offset": "0x005c",
+  "slot_enum_value": 6,
+  "purpose": "언어 선택 메뉴의 일본어 슬롯 표시명을 한국어로 변경 (슬롯·저장 언어 유지)",
+  "format": "echo-weaver-ko/byte-patch-v1",
+  "id": "korean-language-label-1.0.6.0-v1",
+  "path": "Echo Weaver_Data/Managed/space-game.dll",
+  "original_sha256": "cad5cdecb9fca55f8b3b62cca90ddd59406401492c62df210cda0d786927dabf",
+  "patched_sha256": "e0b6a2e50cefb97c9802922fa3d5647a5bd1b2cbad0630329e876feab436cfde",
+  "assembly_mvid": "89097887-4ec8-422c-879c-8010481f92a9",
+  "strong_name_signed": false,
+  "game_version": "1.0.6.0"
+}

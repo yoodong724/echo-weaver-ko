@@ -160,16 +160,32 @@ if ($PreviousVersion) {
         $OldSnapshot = $PreviousPatch.snapshot
         if (-not $OldSnapshot) { $OldSnapshot = '1.0.2.0' }
         $OldBundle = Join-Path $Project "backups\$OldSnapshot\data.unity3d"
-        Expect ((Hash $OldBundle) -eq $PreviousPatch.game.original_sha256) 'Previous game fixture hash mismatch'
+        $OldManaged = Join-Path $Project "backups\$OldSnapshot\Echo Weaver_Data\Managed"
+        if (Test-Path -LiteralPath $OldBundle) {
+            Expect ((Hash $OldBundle) -eq $PreviousPatch.game.original_sha256) 'Previous game fixture hash mismatch'
+            $Results.previous_fixture = 'original'
+        } else {
+            # The previous game's originals were not kept: a bundle with another hash exercises the same guards.
+            $OldBundle = Join-Path $Base 'previous-substitute\data.unity3d'
+            $OldManaged = Join-Path $Base 'previous-substitute\Managed'
+            New-Item -ItemType Directory -Force $OldManaged | Out-Null
+            Copy-Item -LiteralPath (Join-Path $Backup 'data.unity3d') -Destination $OldBundle
+            [IO.File]::AppendAllText($OldBundle, 'previous-version-substitute')
+            foreach ($Spec in $Specs) {
+                [IO.File]::WriteAllText((Join-Path $OldManaged (Split-Path ($Spec.path -replace '/', '\') -Leaf)), 'previous-version-substitute')
+            }
+            $Results.previous_fixture = 'substitute'
+        }
+        $OldBundleHash = Hash $OldBundle
         Copy-Item -LiteralPath $OldBundle -Destination $Bundle -Force
         Run 'new-version-on-old-game-rejected' (Join-Path $Package 'install.cmd')
         Expect ($LastCode -eq 1 -and $LastErr -match 'VERSION_MISMATCH') 'New patch accepted old game version'
-        Expect ((Hash $Bundle) -eq $PreviousPatch.game.original_sha256 -and (ManagedHashesMatch $Specs 'original_sha256')) 'New patch changed unsupported game files'
+        Expect ((Hash $Bundle) -eq $OldBundleHash -and (ManagedHashesMatch $Specs 'original_sha256')) 'New patch changed unsupported game files'
         Copy-Item -LiteralPath (Join-Path $Backup 'data.unity3d') -Destination $Bundle -Force
         Expect ((Hash $Bundle) -eq $Original -and (NoBackupsLeft $Specs)) 'New game fixture was not restored'
         # 11. A game update leaves the previous version's .original backups: install replaces them, restore removes them.
         Copy-Item -LiteralPath $OldBundle -Destination "$Bundle.original"
-        Get-ChildItem -LiteralPath (Join-Path $Project "backups\$OldSnapshot\Echo Weaver_Data\Managed") -Filter '*.dll' |
+        Get-ChildItem -LiteralPath $OldManaged -Filter '*.dll' |
             ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Data "Managed\$($_.Name).original") }
         Run 'install-over-previous-backups' $Install
         Expect ($LastCode -eq 0 -and (Hash $Bundle) -eq $Patched -and (ManagedHashesMatch $Specs 'patched_sha256')) 'Install over previous backups failed'
